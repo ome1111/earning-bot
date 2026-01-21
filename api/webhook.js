@@ -21,113 +21,76 @@ export default async function handler(req, res) {
 
     const update = req.body;
 
-    if (update.message) {
-      const chatId = update.message.chat.id;
-      const text = update.message.text;
+    // Telegram sends either message or callback_query
+    let chatId;
+    if (update.message) chatId = update.message.chat.id;
+    if (update.callback_query) chatId = update.callback_query.message.chat.id;
 
-      const database = await getDb();
-      const users = database.collection("users");
+    if (!chatId) return res.status(200).send("OK");
 
-      // Check if user exists
-      let user = await users.findOne({ chatId });
-      if (!user) {
-        user = {
-          chatId,
-          balance: 0,
-          referral: null,
-          referrals: [],
-          createdAt: new Date(),
-        };
-        await users.insertOne(user);
-      }
+    const database = await getDb();
+    const users = database.collection("users");
 
-      // Handle /start
-      if (text.startsWith("/start")) {
-        let ref = text.split(" ")[1] || null;
+    // Register user if new
+    let user = await users.findOne({ chatId });
+    if (!user) {
+      user = { chatId, balance: 0, referrals: [], createdAt: new Date() };
+      await users.insertOne(user);
+    }
 
-        // Save referral if exists
-        if (ref && ref !== chatId) {
-          const refUser = await users.findOne({ chatId: parseInt(ref) });
-          if (refUser && !refUser.referrals.includes(chatId)) {
-            await users.updateOne(
-              { chatId: parseInt(ref) },
-              { $push: { referrals: chatId } }
-            );
-            // Add referral bonus
-            await users.updateOne(
-              { chatId: parseInt(ref) },
-              { $inc: { balance: 5 } }
-            );
-          }
-        }
+    // Handle /start
+    if (update.message && update.message.text === "/start") {
+      await sendMessage(chatId, "👋 Welcome!\n🎥 Earn by watching ads\n💰 Withdraw real money", getMenuButtons());
+    }
 
-        await sendMessage(chatId, "👋 Welcome to the Earning Bot!\n\nClick the buttons below to start earning.", getMenuButtons());
-      }
+    // Handle inline buttons
+    if (update.callback_query) {
+      const data = update.callback_query.data;
 
-      // Handle button callbacks
-      if (update.callback_query) {
-        const data = update.callback_query.data;
-        const chatId = update.callback_query.message.chat.id;
-
-        if (data === "balance") {
-          const u = await users.findOne({ chatId });
-          await answerCallback(update.callback_query.id, `💰 Your Balance: $${u.balance}`);
-        } else if (data === "earn") {
-          await answerCallback(update.callback_query.id, "🎥 Watch Ads to earn! (Coming Soon)");
-        } else if (data === "withdraw") {
-          await answerCallback(update.callback_query.id, "💸 Withdraw Request (Coming Soon)");
-        } else if (data === "referral") {
-          const u = await users.findOne({ chatId });
-          await answerCallback(update.callback_query.id, `👥 Your referrals: ${u.referrals.length}\nReferral Link: https://t.me/YourBotUsername?start=${chatId}`);
-        }
+      if (data === "balance") {
+        const u = await users.findOne({ chatId });
+        await answerCallback(update.callback_query.id, `💰 Your Balance: $${u.balance}`);
+      } else if (data === "earn") {
+        await answerCallback(update.callback_query.id, "🎥 Watch Ads to earn! (Coming Soon)");
+      } else if (data === "withdraw") {
+        await answerCallback(update.callback_query.id, "💸 Withdraw Request (Coming Soon)");
+      } else if (data === "referral") {
+        const u = await users.findOne({ chatId });
+        await answerCallback(update.callback_query.id, `👥 Your referrals: ${u.referrals.length}\nReferral Link: https://t.me/YourBotUsername?start=${chatId}`);
       }
     }
 
     res.status(200).json({ ok: true });
-  } catch (error) {
-    console.log("Webhook error:", error);
+  } catch (err) {
+    console.log("Webhook error:", err);
     res.status(200).json({ ok: false });
   }
 }
 
-// Send Telegram Message with Inline Buttons
+// Send Telegram message with inline buttons
 async function sendMessage(chatId, text, buttons = null) {
   await fetch(`${API}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      reply_markup: buttons
-    })
+    body: JSON.stringify({ chat_id: chatId, text, reply_markup: buttons })
   });
 }
 
-// Answer callback queries
+// Answer Telegram callback queries
 async function answerCallback(callbackId, text) {
   await fetch(`${API}/answerCallbackQuery`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      callback_query_id: callbackId,
-      text,
-      show_alert: true
-    })
+    body: JSON.stringify({ callback_query_id: callbackId, text, show_alert: true })
   });
 }
 
-// Inline buttons menu
+// Inline menu buttons
 function getMenuButtons() {
   return {
     inline_keyboard: [
-      [
-        { text: "💰 Balance", callback_data: "balance" },
-        { text: "🎥 Earn", callback_data: "earn" }
-      ],
-      [
-        { text: "💸 Withdraw", callback_data: "withdraw" },
-        { text: "👥 Referral", callback_data: "referral" }
-      ]
+      [{ text: "💰 Balance", callback_data: "balance" }, { text: "🎥 Earn", callback_data: "earn" }],
+      [{ text: "💸 Withdraw", callback_data: "withdraw" }, { text: "👥 Referral", callback_data: "referral" }]
     ]
   };
 }
